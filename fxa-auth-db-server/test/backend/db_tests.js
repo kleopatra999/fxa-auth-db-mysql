@@ -1586,6 +1586,101 @@ module.exports = function(config, DB) {
         )
 
         test(
+          'securityEvents',
+          function (t) {
+
+            function securityEvents(suite) {
+              return suite.setUp().then(function () {
+                delete suite.setUp
+
+                var names = Object.keys(suite)
+
+                function run () {
+                  var unit = names.shift()
+
+                  if (unit) {
+                    return suite[unit]().then(run)
+                  }
+                }
+
+                return run()
+              }).done(function () {
+                t.end()
+              })
+            }
+
+            function insert (uid, addr, name, session) {
+              return db.createSecurityEvent({
+                uid: uid,
+                ipAddr: addr,
+                name: name,
+                sessionTokenId: session
+              })
+            }
+
+            function query (uid, addr, name, cb) {
+              return function () {
+                return db.securityEvents({
+                  uid: uid,
+                  ipAddr: addr,
+                  name: name
+                })
+                .then(cb)
+              }
+            }
+
+            var uid1 = newUuid()
+            var uid2 = newUuid()
+            var addr1 = '127.0.0.1'
+            var addr2 = '::127.0.0.2'
+
+            var evA = 'account.login'
+            var evB = 'account.create'
+
+            var session1 = hex32()
+            var session2 = hex32()
+            var session3 = hex32()
+
+            return securityEvents({
+              setUp: function () {
+                return P.all([
+                  insert(uid1, addr1, evB, session1),
+                  insert(uid1, addr1, evA, session2),
+                  insert(uid1, addr2, evA, session3),
+                  insert(uid2, addr1, evC, hex32()),
+                ])
+              },
+
+              testGetEvent: query(
+                uid1, addr1,
+                function (results) {
+                  t.equal(results.length, 2, 'two events for uid and addr')
+                  t.equal(results[0].name, evB, 'correct event name')
+                  t.ok(results[0].createdAt < Date.now(), 'createdAt is set')
+                  t.equal(results[1].name, evA, 'correct event name')
+                  t.ok(results[1].createdAt < Date.now(), 'createdAt is set')
+
+                }
+              ),
+
+              testGetWithIPv6: query(
+                uid1, '::' + addr1,
+                function (results) {
+                  t.equal(results.length, 2, 'two events for ipv6 addr')
+                }
+              ),
+
+              testUnknownUid: query(
+                newUuid(), addr1,
+                function (results) {
+                  t.equal(results.length, 0, 'no events for unknown uid')
+                }
+              )
+            })
+          }
+        )
+
+        test(
           'teardown',
           function (t) {
             return db.close()
